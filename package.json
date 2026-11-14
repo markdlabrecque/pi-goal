@@ -1,0 +1,26 @@
+{
+  "name": "pi-goal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Session-scoped goal pursuit with bounded automatic continuation for Pi",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --test --test-timeout=20000 tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.5.2",
+    "@earendil-works/pi-ai": "1.5.2",
+    "@types/node": "^24.0.0",
+    "typebox": "1.3.27",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

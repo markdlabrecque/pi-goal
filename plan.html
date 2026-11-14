@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pi Goal Plan</title>
+<link rel="stylesheet" href="/home/mark/.agents/skills/html-plan/runtime/htmlplan.css">
+<script src="/home/mark/.agents/skills/html-plan/runtime/htmlplan.js" defer></script>
+<body>
+<header>
+<h1>Goal pursuit in Pi</h1>
+<p>Approved for implementation. The user accepted the plan and its proposed defaults. No implementation starts in this step.</p>
+<doc-changes new="9"></doc-changes>
+<details class="thread"><summary>Why · 2 requests</summary>
+<doc-quote via="prompt" from="the user">Claude code has a goal command that has the harness pursue a goal until completion. Does Pi have a similar command? If not, would this make more sense to implement as a skill or a Pi extension?</doc-quote>
+<doc-quote via="prompt" from="the user">Ok let’s add a new extension called pi-goal. Create a plan doc inside that folder to start</doc-quote>
+</details>
+</header>
+<main><doc-plan>
+<doc-claim>
+<p>The user can start one goal in each session.</p>
+<doc-mock frame="terminal" title="Pi · proposed commands" w="470"><template>/goal Make the test suite pass
+<span class="g">Goal active. Up to 10 continuations.</span>
+
+/goal status
+Goal: Make the test suite pass
+State: active · Continuations: 0 / 10
+
+/goal pause
+<span class="y">Goal paused. No automatic continuation.</span>
+
+/goal resume
+/goal cancel</template></doc-mock>
+<doc-claim>
+<p>The command saves the goal before it starts work.</p>
+<doc-code title="index.ts · command sketch" lang="ts"><script type="text/plain">
+// Proposed command grammar:
+// /goal <text>
+// /goal status | pause | resume | cancel
+// /goal start <text>  (escape a reserved command name)
+// /goal limit <positive integer>
+// Reject a second unfinished goal. Do not replace it silently.
+// Start with the user's goal and explicit acceptance criteria.
+// Ask for missing criteria when their absence changes the task.
+// Never treat goal text as a shell command.
+</script></doc-code>
+</doc-claim>
+</doc-claim>
+
+<doc-claim>
+<p>Pi continues when work remains and the goal is active.</p>
+<doc-machine name="goal" caption="The status shows the state and the continuation count."><script type="text/plain">
+machine goal initial idle
+state idle # No goal.
+state active # Goal active. Work can continue.
+state paused # Goal paused. The user must resume it.
+state completed # Goal complete. Evidence saved.
+state cancelled final # Goal cancelled. No continuation.
+| idle | active | completed |
+| . | paused | cancelled |
+idle -start-> active : /goal
+active -continue-> active : work remains
+active -pause-> paused : stop or limit
+paused -resume-> active : /goal resume
+active -finish-> completed : evidence
+active -cancel-> cancelled : /goal cancel
+paused -cancel-> cancelled : /goal cancel
+completed -start-> active : new goal
+</script>
+<div data-state="idle"><doc-mock frame="terminal" w="400"><template>Goal: none</template></doc-mock></div>
+<div data-state="active"><doc-mock frame="terminal" w="400"><template>Goal active · Continuations: 3 / 10</template></doc-mock></div>
+<div data-state="paused"><doc-mock frame="terminal" w="400"><template>Goal paused · Human input required
+/goal resume</template></doc-mock></div>
+<div data-state="completed"><doc-mock frame="terminal" w="400"><template>Goal complete · Evidence saved</template></doc-mock></div>
+<div data-state="cancelled"><doc-mock frame="terminal" w="400"><template>Goal cancelled</template></doc-mock></div>
+</doc-machine>
+<doc-claim>
+<p>The extension requests continuation only at the final actionable boundary.</p>
+<doc-code title="index.ts · lifecycle sketch" lang="ts"><script type="text/plain">
+pi.on("agent_before_settle", async (event, ctx) => {
+  // Read current state again after each awaited operation.
+  // Reject stale results after pause, cancel, or a session change.
+  // Honor abort, errors, human input, and all goal limits first.
+  // Save the updated counter before requesting continuation.
+  // Add a hidden custom_message with the goal and next action.
+  // Return { entries: [...event.entries, reminder], continue: true }.
+});
+// agent_settled: persist pause after an abort; never restart here.
+// before_agent_start: add current goal instructions when active.
+</script></doc-code>
+<doc-note tone="info">Pi 1.5.2 documents this hook in <code>docs/extensions.md:663-695</code>. Do not use <code>agent_end</code> as the final boundary. Pi can still retry or compact after that event.</doc-note>
+</doc-claim>
+</doc-claim>
+
+<doc-claim>
+<p>Completion requires a report against the acceptance criteria.</p>
+<doc-code title="tools.ts · report tool sketch" lang="ts"><script type="text/plain">
+type GoalReport = {
+  goalId: string;
+  outcome: "complete" | "blocked";
+  summary: string;
+  criteria: Array<{
+    criterion: string;
+    evidence: string;
+  }>;
+};
+// A proposed goal_report tool records evidence for the active goal.
+// Reject stale IDs, empty evidence, and missing criteria.
+// A blocked report pauses the goal before Pi can settle.
+// A complete report ends automatic continuation.
+// Model evidence is a claim, not independent proof.
+</script></doc-code>
+<doc-note tone="ok">Approved decision: Completion requires an evidence report for each acceptance criterion. The first version does not require an extension-run test command.</doc-note>
+<doc-note tone="warn">The default supports goals without a test command. A report tool cannot prove arbitrary real-world success. Test commands need explicit user approval.</doc-note>
+</doc-claim>
+
+<doc-claim>
+<p>Stops and limits prevent automatic work without an end.</p>
+<doc-code title="policy.ts · stop rules sketch" lang="ts"><script type="text/plain">
+// Pause on Escape, provider failure, or a continuation limit.
+// Pause after two consecutive cycles with no new work evidence.
+// Evidence: successful tools that change or test work, plus reports.
+// Tool activity alone does not prove meaningful progress.
+// Never auto-resume after a pause or an application restart.
+// Human questions and approvals take priority over goal continuation.
+// Observe AskAQuestion and FlagAHuman calls when those tools exist.
+// A failed or cancelled question must not restart goal pursuit.
+// Goal instructions require a blocked report for plain-text questions.
+// Do not assume plain-text question detection is reliable.
+// Pause/cancel must invalidate any pending continuation decision.
+// A new goal never raises permissions or bypasses safety rules.
+</script></doc-code>
+<doc-note tone="ok">Approved decision: Each goal starts with a limit of 10 automatic continuations. Count extra runs, not individual tool calls. The user can change the limit with <code>/goal limit</code>.</doc-note>
+<doc-claim>
+<p>Tests cover stops before the extension can start more work.</p>
+<doc-code title="tests · acceptance cases sketch" lang="ts"><script type="text/plain">
+// policy.test.ts
+// - active + incomplete -> one continuation; count increases once
+// - complete, blocked, paused, cancelled -> no continuation
+// - limit and repeated no-progress cycles -> pause with reason
+// - stale report or stale async result -> reject
+// lifecycle.test.ts
+// - retries and compaction do not consume goal continuations
+// - Escape before or during the settle hook -> no restart
+// - human question, cancellation, FlagAHuman -> no restart
+// - provider error -> pause, not an automatic retry loop
+// - resume, reload, fork, tree navigation -> correct branch state
+// - cancel during an awaited operation -> no late continuation
+// - missing UI -> commands and state remain usable
+// - other settle handlers retain their entries
+// Manual smoke test: run a tiny failing-test fixture to completion.
+</script></doc-code>
+</doc-claim>
+</doc-claim>
+
+<doc-claim aux="shared">
+<p>Session entries hold the goal state and its evidence.</p>
+<doc-schema id="goal-state" lang="ts" title="state.ts · proposed record"><script type="text/plain">
+type GoalState = {
+  version: 1;
+  id: string;
+  text: string;
+  criteria: string[];
+  status: "active" | "paused" | "completed" | "cancelled";
+  continuations: number;
+  maxContinuations: number;
+  noProgressCycles: number;
+  reason?: string;
+  reports: GoalReport[];
+};
+// Save snapshots with pi.appendEntry("pi-goal:state", state).
+// Rebuild from the current session branch, not the whole file.
+// Restore unfinished goals as paused on reload, resume, or fork.
+// Compaction keeps the record; inject active goal text each run.
+// Do not inject completed or cancelled goals into new work.
+// Use a generation token to reject stale asynchronous results.
+</script></doc-schema>
+<doc-note tone="info">Proposed files under <code>extensions/pi-goal/</code>: <code>package.json</code>, <code>index.ts</code>, <code>state.ts</code>, <code>policy.ts</code>, <code>tools.ts</code>, <code>tests/policy.test.ts</code>, <code>tests/lifecycle.test.ts</code>, <code>README.md</code>, and <code>tsconfig.json</code>. The count excludes these plan files. Match the local extension package format. Confirm the installed SDK types before implementation. Use an isolated fixture to test discovery without a global settings change.</doc-note>
+</doc-claim>
+<doc-claim aux="scope">
+<p>This plan adds no code and changes no Pi settings.</p>
+<ul>
+<li>Only this plan and its portable HTML copy exist at this stage.</li>
+<li>The first version supports one goal per session. It adds no subagents, background service, scheduler, or external orchestration.</li>
+<li>It does not copy Claude Code internals or promise identical behavior.</li>
+<li>It does not add a skill. The extension supplies goal instructions.</li>
+<li>It does not execute test commands from untrusted goal text.</li>
+<li>A continuation count is the first limit. A monetary budget is out of scope until reliable cost data exists.</li>
+<li>Before implementation, read the extension documentation and relevant examples in full. Confirm abort and question events with an integration test.</li>
+<li>Implement state and policy first, then commands and the report tool, then lifecycle hooks. Run tests before a manual smoke test.</li>
+</ul>
+</doc-claim>
+</doc-plan></main>
+</body></html>
